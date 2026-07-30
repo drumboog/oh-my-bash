@@ -374,6 +374,10 @@ function prompt_condaenv {
 ### Prompt components
 # Each component will draw itself, and hide itself if no information needs to be shown
 
+prompt_time() {
+  prompt_segment cyan black "\@"
+}
+
 # Context: user@hostname (who am I and where am I)
 function prompt_context {
   local user=$(whoami)
@@ -401,21 +405,67 @@ function git_stash_dirty {
 }
 
 # Git: branch/detached head, dirty status
-function prompt_git {
+prompt_git() {
   local ref dirty
-  if _omb_prompt_git rev-parse --is-inside-work-tree &>/dev/null; then
-    ZSH_THEME_GIT_PROMPT_DIRTY='±'
-    dirty=$(git_status_dirty)
-    stash=$(git_stash_dirty)
-    ref=$(_omb_prompt_git symbolic-ref HEAD 2> /dev/null) ||
-      ref="➦ $(_omb_prompt_git describe --exact-match --tags HEAD 2> /dev/null)" ||
-      ref="➦ $(_omb_prompt_git show-ref --head -s --abbrev | head -n1 2> /dev/null)"
-    if [[ -n $dirty ]]; then
-      prompt_segment yellow black
-    else
-      prompt_segment green black
+  if git rev-parse --is-inside-work-tree &>/dev/null; then
+    ref=$(git symbolic-ref HEAD 2>/dev/null) || ref="➦ $(git rev-parse --short HEAD 2>/dev/null)"
+    ref="${ref#refs/heads/}"
+
+    # Ahead/behind
+    local ahead behind
+    ahead=$(git log --oneline @{upstream}.. 2>/dev/null | wc -l | tr -d ' ')
+    behind=$(git log --oneline ..@{upstream} 2>/dev/null | wc -l | tr -d ' ')
+
+    # Staged counts
+    local staged_added staged_modified staged_deleted
+    staged_added=$(git diff --cached --numstat 2>/dev/null | grep -c "^[0-9]" | tr -d ' ')
+    staged_modified=$(git diff --cached --name-status 2>/dev/null | grep -c "^M")
+    staged_deleted=$(git diff --cached --name-status 2>/dev/null | grep -c "^D")
+
+    # Unstaged counts
+    local unstaged_modified unstaged_deleted
+    unstaged_modified=$(git diff --name-status 2>/dev/null | grep -c "^M")
+    unstaged_deleted=$(git diff --name-status 2>/dev/null | grep -c "^D")
+
+    # Untracked
+    local untracked
+    untracked=$(git ls-files --others --exclude-standard 2>/dev/null | wc -l | tr -d ' ')
+
+    # Build status string
+    local git_status=""
+
+    # Ahead/behind
+    [[ $ahead -gt 0 ]] && git_status+=" ↑${ahead}"
+    [[ $behind -gt 0 ]] && git_status+=" ↓${behind}"
+
+    # Staged (green indicators)
+    local staged_info=""
+    [[ $staged_added -gt 0 || $staged_modified -gt 0 || $staged_deleted -gt 0 ]] && staged_info="+${staged_added} ~${staged_modified} -${staged_deleted}"
+
+    # Unstaged (red indicators)
+    local unstaged_info=""
+    [[ $unstaged_modified -gt 0 || $unstaged_deleted -gt 0 || $untracked -gt 0 ]] && unstaged_info="~${unstaged_modified} -${unstaged_deleted} ?${untracked}"
+
+    # Determine if dirty
+    if [[ -n "$staged_info" || -n "$unstaged_info" ]]; then
+      dirty=true
     fi
-    PR="$PR${ref/refs\/heads\// }$stash$dirty"
+
+    # Color codes for inline colorization
+    local green_fg='\[\e[38;5;22m\]'
+    local red_fg='\[\e[38;5;88m\]'
+    local black_fg='\[\e[22;30m\]'
+
+    # Build the display string
+    local display=" ${ref}${git_status}"
+    [[ -n "$staged_info" ]] && display+=" | ${green_fg}✓ ${staged_info}"
+    [[ -n "$unstaged_info" ]] && display+=" ${black_fg}| ${red_fg}✗ ${unstaged_info}"
+
+    if [[ -n "$dirty" ]]; then
+      prompt_segment yellow black "${display}"
+    else
+      prompt_segment green black "${display}"
+    fi
   fi
 }
 
@@ -457,7 +507,7 @@ function prompt_hg {
 
 # Dir: current working directory
 function prompt_dir {
-  prompt_segment blue black '\w'
+  prompt_segment blue white '\w'
 }
 
 # Status:
@@ -591,7 +641,8 @@ function build_prompt {
   [[ ! -z ${AG_EMACS_DIR+x} ]] && prompt_emacsdir
   prompt_status
   #[[ -z ${AG_NO_HIST+x} ]] && prompt_histdt
-  [[ -z ${AG_NO_CONTEXT+x} ]] && prompt_context
+  prompt_time
+  #[[ -z ${AG_NO_CONTEXT+x} ]] && prompt_context
   if [[ ${OMB_PROMPT_SHOW_PYTHON_VENV-} ]]; then
     prompt_virtualenv
     prompt_pyenv
